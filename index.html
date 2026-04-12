@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Numerics Animation</title>
 <style>
-body{font-family:Arial;background:#eef2f6;margin:0}
+body{font-family:Arial,Helvetica,sans-serif;background:#eef2f6;margin:0}
 .wrap{max-width:1100px;margin:20px auto;background:white;padding:20px;border-radius:12px}
 .controls{text-align:center;margin-bottom:10px}
 canvas{display:block;margin:auto;border:1px solid #ccc;border-radius:10px;background:#f9fbfd}
@@ -15,7 +16,8 @@ select,button{font-size:16px;padding:8px 12px;margin:0 4px}
 <div class="wrap">
 <div class="controls">
 <select id="num"></select>
-<button id="playBtn">Play</button>
+<button id="forwardBtn">Count Forward</button>
+<button id="backwardBtn">Count Backward</button>
 <button id="pauseBtn">Pause</button>
 <button id="resetBtn">Reset</button>
 <button id="revealBtn">Reveal Number</button>
@@ -24,13 +26,17 @@ select,button{font-size:16px;padding:8px 12px;margin:0 4px}
 </div>
 
 <script>
-const canvas=document.getElementById('c');
-const ctx=canvas.getContext('2d');
-const sel=document.getElementById('num');
-const playBtn=document.getElementById('playBtn');
-const pauseBtn=document.getElementById('pauseBtn');
-const resetBtn=document.getElementById('resetBtn');
-const revealBtn=document.getElementById('revealBtn');
+const HEADER_Y = 160;
+const NUMERAL_OFFSET_Y = 42;
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const sel = document.getElementById('num');
+const forwardBtn = document.getElementById('forwardBtn');
+const backwardBtn = document.getElementById('backwardBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resetBtn = document.getElementById('resetBtn');
+const revealBtn = document.getElementById('revealBtn');
 
 for(let i=0;i<=100;i++){
   const o=document.createElement('option');
@@ -39,33 +45,45 @@ for(let i=0;i<=100;i++){
   sel.appendChild(o);
 }
 
-const BLOCK=18;
-const SOURCE={x:60,y:180,w:240,h:320};
-const RODS={x:420,y:180};
-const ONES={x:700,y:180};
-const ROD_CELL=22;
-const ROD_ROW=28;
-const ONES_CELL=28;
-const MOVE_DURATION=760;
-const LINE_FORM_DURATION=40;
-const ROD_MOVE_DURATION=120;
-const PAUSE_DURATION=120;
-const TEN_PAUSE_DURATION=1000;
+const BLOCK = 18;
+const SOURCE = {x:60,y:180,w:240,h:320};
+const RODS = {x:420,y:180};
+const ONES = {x:700,y:180};
+const ROD_CELL = 22;
+const ROD_ROW = 28;
+const ONES_CELL = 28;
 
-let blocks=[];
-let order=[];
-let plan=[];
-let n=0;
-let preparedNumber=0;
-let placedCount=0;
-let tensCount=0;
-let running=false;
-let paused=false;
-let rafId=null;
-let moveIndex=0;
-let moveStart=0;
-let revealed=false;
-let pauseStartedAt=0;
+const FORWARD_MOVE_MS = 760;
+const LINE_UP_MS = 40;
+const ROD_MOVE_MS = 120;
+const FORWARD_SMALL_PAUSE_MS = 120;
+const TEN_PAUSE_MS = 1000;
+const BACKWARD_REMOVE_MS = 780;
+const BACKWARD_ROD_MOVE_MS = 820;
+const BACKWARD_PRE_BREAK_PAUSE_MS = 1000;
+
+let preparedNumber = 0;
+let blocks = [];
+let order = [];
+let visibleTotal = 0;
+let tensDisplay = 0;
+let onesDisplay = 0;
+let running = false;
+let paused = false;
+let rafId = null;
+let revealed = false;
+let mode = 'idle';
+
+let forwardPlan = [];
+let forwardIndex = 0;
+let forwardStart = 0;
+let forwardPauseStart = 0;
+
+let backwardState = 'idle';
+let backwardStart = 0;
+let currentTravel = null;
+let removeSlot = -1;
+let extraTenMarker = 0;
 
 function shuffle(a){
   for(let i=a.length-1;i>0;i--){
@@ -76,7 +94,7 @@ function shuffle(a){
 }
 
 function ease(t){
-  return t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+  return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
 }
 
 function rr(x,y,w,h,r){
@@ -93,346 +111,525 @@ function rr(x,y,w,h,r){
   ctx.closePath();
 }
 
-function makeBlocks(num){
-  blocks=[];
-  const pts=[];
+function rodPos(indexInRod, rod){
+  return {
+    x: RODS.x + (ROD_CELL - BLOCK)/2 + indexInRod * ROD_CELL,
+    y: RODS.y + rod * ROD_ROW + (ROD_CELL - BLOCK)/2
+  };
+}
+
+function onesGridPos(slot){
+  const row = Math.floor(slot / 5);
+  const col = slot % 5;
+  return {
+    x: ONES.x + (ONES_CELL - BLOCK)/2 + col * ONES_CELL,
+    y: ONES.y + (ONES_CELL - BLOCK)/2 + row * ONES_CELL
+  };
+}
+
+function onesLinePos(index){
+  return {
+    x: ONES.x + (ONES_CELL - BLOCK)/2 + index * ONES_CELL,
+    y: ONES.y + ONES_CELL + (ONES_CELL - BLOCK)/2
+  };
+}
+
+function makeLooseBlocks(num){
+  blocks = [];
+  const pts = [];
   for(let i=0;i<num;i++){
-    let x=SOURCE.x;
-    let y=SOURCE.y;
-    let ok=false;
-    let tries=0;
-    while(!ok&&tries<1500){
-      x=SOURCE.x+Math.random()*(SOURCE.w-BLOCK);
-      y=SOURCE.y+Math.random()*(SOURCE.h-BLOCK);
-      ok=true;
+    let x = SOURCE.x;
+    let y = SOURCE.y;
+    let ok = false;
+    let tries = 0;
+    while(!ok && tries < 1500){
+      x = SOURCE.x + Math.random() * (SOURCE.w - BLOCK);
+      y = SOURCE.y + Math.random() * (SOURCE.h - BLOCK);
+      ok = true;
       for(const p of pts){
-        if(Math.hypot(x-p.x,y-p.y)<18){ok=false;break;}
+        if(Math.hypot(x - p.x, y - p.y) < 18){
+          ok = false;
+          break;
+        }
       }
       tries++;
     }
     pts.push({x,y});
-    blocks.push({x,y,startX:x,startY:y,tx:x,ty:y,zone:'loose',rod:null});
-  }
-  order=shuffle([...Array(num).keys()]);
-}
-
-function buildPlan(){
-  plan=[];
-  const onesOrder=[];
-
-  for(let i=0;i<n;i++){
-    const id=order[i];
-    onesOrder.push(id);
-    const onesIndex=i%10;
-    const row=Math.floor(onesIndex/5);
-    const col=onesIndex%5;
-
-    plan.push({
-      type:'toOnes',
-      id:id,
-      tx:ONES.x+col*ONES_CELL+(ONES_CELL-BLOCK)/2,
-      ty:ONES.y+row*ONES_CELL+(ONES_CELL-BLOCK)/2
+    blocks.push({
+      x, y,
+      startX:x, startY:y,
+      zone:'loose',
+      rod:null,
+      slot:null,
+      hidden:false
     });
-
-    if((i+1)%10===0){
-      const rod=Math.floor(i/10);
-      const baseLineX=ONES.x+(ONES_CELL-BLOCK)/2;
-      const baseLineY=ONES.y+ONES_CELL+(ONES_CELL-BLOCK)/2;
-      const ids=onesOrder.slice(rod*10,rod*10+10);
-
-      plan.push({
-        type:'lineUpGroup',
-        rod:rod,
-        ids:ids,
-        baseX:baseLineX,
-        baseY:baseLineY
-      });
-
-      plan.push({type:'preTenPause'});
-
-      plan.push({
-        type:'toRodGroup',
-        rod:rod,
-        ids:ids
-      });
-
-      plan.push({type:'tenComplete'});
-    }
   }
+  order = shuffle([...Array(num).keys()]);
 }
 
 function prepareNumber(num){
-  preparedNumber=num;
-  n=num;
-  running=false;
-  paused=false;
-  moveIndex=0;
-  moveStart=0;
-  pauseStartedAt=0;
-  placedCount=0;
-  tensCount=0;
-  revealed=false;
-  plan=[];
+  preparedNumber = num;
+  revealed = false;
+  running = false;
+  paused = false;
+  mode = 'idle';
   if(rafId) cancelAnimationFrame(rafId);
-  makeBlocks(num);
+  rafId = null;
+
+  forwardPlan = [];
+  forwardIndex = 0;
+  forwardStart = 0;
+  forwardPauseStart = 0;
+
+  backwardState = 'idle';
+  backwardStart = 0;
+  currentTravel = null;
+  removeSlot = -1;
+  extraTenMarker = 0;
+
+  visibleTotal = 0;
+  tensDisplay = 0;
+  onesDisplay = 0;
+
+  makeLooseBlocks(num);
   draw();
 }
 
-function start(){
-  if(paused){
-    paused=false;
-    if(!running){
-      running=true;
-      rafId=requestAnimationFrame(loop);
-    }
-    return;
-  }
-  if(running) return;
+function buildForwardPlan(){
+  forwardPlan = [];
+  const seen = [];
 
-  n=preparedNumber;
-  moveIndex=0;
-  moveStart=0;
-  pauseStartedAt=0;
-  placedCount=0;
-  tensCount=0;
-  makeBlocks(n);
-  buildPlan();
-  running=true;
-  paused=false;
-  rafId=requestAnimationFrame(loop);
+  for(let i=0;i<preparedNumber;i++){
+    const id = order[i];
+    seen.push(id);
+    const slot = i % 10;
+    const p = onesGridPos(slot);
+    forwardPlan.push({type:'toOnes', id, tx:p.x, ty:p.y, slot});
+
+    if((i + 1) % 10 === 0){
+      const rod = Math.floor(i / 10);
+      const ids = seen.slice(rod * 10, rod * 10 + 10);
+      const base = onesLinePos(0);
+      forwardPlan.push({type:'lineUp', ids, rod, baseX:base.x, baseY:base.y});
+      forwardPlan.push({type:'pause'});
+      forwardPlan.push({type:'toRod', ids, rod});
+      forwardPlan.push({type:'countTen'});
+    }
+  }
+}
+
+function startForward(){
+  if(running || paused) return;
+  mode = 'forward';
+  makeLooseBlocks(preparedNumber);
+  buildForwardPlan();
+  forwardIndex = 0;
+  forwardStart = 0;
+  forwardPauseStart = 0;
+  visibleTotal = 0;
+  tensDisplay = 0;
+  onesDisplay = 0;
+  running = true;
+  rafId = requestAnimationFrame(loop);
+}
+
+function setupBackwardState(){
+  makeLooseBlocks(preparedNumber);
+  const fullTens = Math.floor(preparedNumber / 10);
+  const ones = preparedNumber % 10;
+
+  for(let r=0;r<fullTens;r++){
+    for(let j=0;j<10;j++){
+      const id = order[r * 10 + j];
+      const p = rodPos(j, r);
+      const b = blocks[id];
+      b.x = p.x;
+      b.y = p.y;
+      b.zone = 'rod';
+      b.rod = r;
+      b.slot = null;
+      b.hidden = false;
+    }
+  }
+
+  for(let i=0;i<ones;i++){
+    const id = order[fullTens * 10 + i];
+    const p = onesGridPos(i);
+    const b = blocks[id];
+    b.x = p.x;
+    b.y = p.y;
+    b.zone = 'ones';
+    b.rod = null;
+    b.slot = i;
+    b.hidden = false;
+  }
+
+  visibleTotal = preparedNumber;
+  tensDisplay = fullTens;
+  onesDisplay = ones;
+  extraTenMarker = 0;
+  currentTravel = null;
+  backwardState = ones > 0 ? 'remove' : (fullTens > 0 ? 'preBreakPause' : 'done');
+  removeSlot = ones - 1;
+  backwardStart = 0;
+}
+
+function startBackward(){
+  if(running || paused) return;
+  mode = 'backward';
+  setupBackwardState();
+  running = true;
+  rafId = requestAnimationFrame(loop);
 }
 
 function resetAll(){
-  if(rafId) cancelAnimationFrame(rafId);
-  running=false;
-  paused=false;
-  moveIndex=0;
-  moveStart=0;
-  pauseStartedAt=0;
-  placedCount=0;
-  tensCount=0;
-  sel.style.visibility='visible';
-  sel.value='0';
+  sel.style.visibility = 'visible';
+  sel.value = '0';
   prepareNumber(0);
 }
 
-function beginGroupStep(step, now){
-  step.startPositions=step.ids.map(id=>({id:id,x:blocks[id].x,y:blocks[id].y}));
-  moveStart=now;
+function updateForward(now){
+  if(forwardIndex >= forwardPlan.length){
+    running = false;
+    return;
+  }
+
+  const step = forwardPlan[forwardIndex];
+
+  if(step.type === 'pause'){
+    if(!forwardPauseStart) forwardPauseStart = now;
+    if(now - forwardPauseStart >= 1000){
+      forwardIndex++;
+      forwardPauseStart = 0;
+    }
+    return;
+  }
+
+  if(step.type === 'countTen'){
+    if(!forwardPauseStart) forwardPauseStart = now;
+    if(now - forwardPauseStart >= TEN_PAUSE_MS){
+      tensDisplay++;
+      onesDisplay = 0;
+      forwardIndex++;
+      forwardPauseStart = 0;
+    }
+    return;
+  }
+
+  if(!forwardStart){
+    if(step.ids){
+      step.starts = step.ids.map(id => ({id, x:blocks[id].x, y:blocks[id].y}));
+    } else {
+      const b = blocks[step.id];
+      b.startX = b.x;
+      b.startY = b.y;
+    }
+    forwardStart = now;
+  }
+
+  if(step.type === 'toOnes'){
+    const b = blocks[step.id];
+    const elapsed = now - forwardStart;
+    const t = Math.min(1, elapsed / FORWARD_MOVE_MS);
+    const e = ease(t);
+    const smooth = e * e * (3 - 2 * e);
+
+    b.x = b.startX + (step.tx - b.startX) * smooth;
+    b.y = b.startY + (step.ty - b.startY) * smooth;
+    b.zone = 'ones';
+    b.slot = step.slot;
+
+    if(t >= 1 && elapsed >= FORWARD_MOVE_MS + FORWARD_SMALL_PAUSE_MS){
+      b.x = step.tx;
+      b.y = step.ty;
+      visibleTotal++;
+      onesDisplay++;
+      forwardIndex++;
+      forwardStart = 0;
+    }
+    return;
+  }
+
+  if(step.type === 'lineUp'){
+    const elapsed = now - forwardStart;
+    const t = Math.min(1, elapsed / LINE_UP_MS);
+    const e = ease(t);
+
+    for(let i=0;i<step.ids.length;i++){
+      const s = step.starts[i];
+      const b = blocks[s.id];
+      const target = onesLinePos(i);
+      b.x = s.x + (target.x - s.x) * e;
+      b.y = s.y + (target.y - s.y) * e;
+      b.zone = 'ones';
+      b.slot = i;
+    }
+
+    if(t >= 1){
+      forwardIndex++;
+      forwardStart = 0;
+    }
+    return;
+  }
+
+  if(step.type === 'toRod'){
+    const elapsed = now - forwardStart;
+    const t = Math.min(1, elapsed / ROD_MOVE_MS);
+    const e = ease(t);
+
+    for(let i=0;i<step.ids.length;i++){
+      const s = step.starts[i];
+      const b = blocks[s.id];
+      const target = rodPos(i, step.rod);
+      b.x = s.x + (target.x - s.x) * e;
+      b.y = s.y + (target.y - s.y) * e;
+      b.zone = 'rod';
+      b.rod = step.rod;
+      b.slot = null;
+    }
+
+    if(t >= 1){
+      forwardIndex++;
+      forwardStart = 0;
+    }
+  }
+}
+
+function beginBackwardRodTravel(now){
+  const rodIndex = tensDisplay - 1;
+  const ids = [];
+  for(let j=0;j<10;j++) ids.push(order[rodIndex * 10 + j]);
+  currentTravel = {
+    rod: rodIndex,
+    ids,
+    starts: ids.map(id => ({id, x:blocks[id].x, y:blocks[id].y}))
+  };
+  tensDisplay--;
+  extraTenMarker = 1;
+  backwardState = 'rodTravel';
+  backwardStart = now;
+}
+
+function updateBackward(now){
+  if(visibleTotal <= 0){
+    running = false;
+    return;
+  }
+
+  if(backwardState === 'preBreakPause'){
+    if(!backwardStart) backwardStart = now;
+    if(now - backwardStart >= BACKWARD_PRE_BREAK_PAUSE_MS){
+      backwardStart = 0;
+      beginBackwardRodTravel(now);
+    }
+    return;
+  }
+
+  if(backwardState === 'rodTravel'){
+    const elapsed = now - backwardStart;
+    const t = Math.min(1, elapsed / BACKWARD_ROD_MOVE_MS);
+    const e = ease(t);
+
+    for(let i=0;i<currentTravel.ids.length;i++){
+      const s = currentTravel.starts[i];
+      const b = blocks[s.id];
+      const target = onesGridPos(i);
+      b.x = s.x + (target.x - s.x) * e;
+      b.y = s.y + (target.y - s.y) * e;
+      b.zone = 'rodTravel';
+      b.rod = currentTravel.rod;
+      b.hidden = false;
+    }
+
+    if(t >= 1){
+      for(let i=0;i<currentTravel.ids.length;i++){
+        const id = currentTravel.ids[i];
+        const b = blocks[id];
+        const target = onesGridPos(i);
+        b.x = target.x;
+        b.y = target.y;
+        b.zone = 'ones';
+        b.rod = null;
+        b.slot = i;
+        b.hidden = false;
+      }
+      onesDisplay = 10;
+      removeSlot = 9;
+      currentTravel = null;
+      extraTenMarker = 1;
+      backwardState = 'remove';
+      backwardStart = 0;
+    }
+    return;
+  }
+
+  if(backwardState === 'remove'){
+    if(removeSlot < 0){
+      if(tensDisplay > 0){
+        backwardState = 'preBreakPause';
+        backwardStart = 0;
+      } else {
+        running = false;
+      }
+      return;
+    }
+
+    const removeId = order[tensDisplay * 10 + removeSlot];
+    const b = blocks[removeId];
+
+    if(!backwardStart){
+      backwardStart = now;
+      b.startX = b.x;
+      b.startY = b.y;
+    }
+
+    const elapsed = now - backwardStart;
+    const t = Math.min(1, elapsed / BACKWARD_REMOVE_MS);
+    const fade = 1 - t;
+    b.fade = fade;
+
+    if(t >= 1){
+      b.hidden = true;
+      b.zone = 'gone';
+      b.slot = null;
+      b.rod = null;
+      b.fade = 1;
+      visibleTotal--;
+      onesDisplay--;
+      removeSlot--;
+      backwardStart = 0;
+      if(extraTenMarker === 1) extraTenMarker = 0;
+    }
+    return;
+  }
 }
 
 function update(now){
-  if(!running||paused) return;
-  if(moveIndex>=plan.length){
-    running=false;
-    return;
-  }
-
-  const step=plan[moveIndex];
-
-  if(step.type==='preTenPause'){
-    if(pauseStartedAt===0) pauseStartedAt=now;
-    if(now-pauseStartedAt>=1000){
-      moveIndex++;
-      pauseStartedAt=0;
-    }
-    return;
-  }
-
-  if(step.type==='tenComplete'){
-    if(pauseStartedAt===0) pauseStartedAt=now;
-    if(now-pauseStartedAt>=TEN_PAUSE_DURATION){
-      tensCount++;
-      moveIndex++;
-      pauseStartedAt=0;
-    }
-    return;
-  }
-
-  if(step.type==='lineUpGroup'){
-    if(moveStart===0) beginGroupStep(step, now);
-    const elapsed=now-moveStart;
-    const t=Math.min(1, elapsed/LINE_FORM_DURATION);
-    const e=ease(t);
-
-    for(let i=0;i<step.ids.length;i++){
-      const start=step.startPositions[i];
-      const b=blocks[start.id];
-      const targetX=step.baseX + i*ONES_CELL;
-      const targetY=step.baseY;
-      b.x=start.x+(targetX-start.x)*e;
-      b.y=start.y+(targetY-start.y)*e;
-      b.zone='ones';
-    }
-
-    if(t>=1){
-      moveIndex++;
-      moveStart=0;
-    }
-    return;
-  }
-
-  if(step.type==='toRodGroup'){
-    if(moveStart===0) beginGroupStep(step, now);
-    const elapsed=now-moveStart;
-    const t=Math.min(1, elapsed/ROD_MOVE_DURATION);
-    const e=ease(t);
-    const baseX=RODS.x+(ROD_CELL-BLOCK)/2;
-    const baseY=RODS.y+step.rod*ROD_ROW+(ROD_CELL-BLOCK)/2;
-
-    for(let i=0;i<step.ids.length;i++){
-      const start=step.startPositions[i];
-      const b=blocks[start.id];
-      const targetX=baseX + i*ROD_CELL;
-      const targetY=baseY;
-      b.x=start.x+(targetX-start.x)*e;
-      b.y=start.y+(targetY-start.y)*e;
-      b.zone='rod';
-      b.rod=step.rod;
-    }
-
-    if(t>=1){
-      moveIndex++;
-      moveStart=0;
-    }
-    return;
-  }
-
-  const b=blocks[step.id];
-  if(moveStart===0){
-    b.startX=b.x;
-    b.startY=b.y;
-    b.tx=step.tx;
-    b.ty=step.ty;
-    if(step.type==='toOnes') b.zone='ones';
-    moveStart=now;
-  }
-
-  const elapsed=now-moveStart;
-  const t=Math.min(1,elapsed/MOVE_DURATION);
-  const e=ease(t);
-  const smooth=e*e*(3-2*e);
-
-  b.x=b.startX+(b.tx-b.startX)*smooth;
-  b.y=b.startY+(b.ty-b.startY)*smooth;
-
-  if(t>=1&&elapsed>=MOVE_DURATION+PAUSE_DURATION){
-    b.x=b.tx;
-    b.y=b.ty;
-    if(step.type==='toOnes') placedCount++;
-    moveIndex++;
-    moveStart=0;
-  }
+  if(!running || paused) return;
+  if(mode === 'forward') updateForward(now);
+  if(mode === 'backward') updateBackward(now);
 }
 
 function drawNumberLine(){
-  const sx=70, ex=930, y=70;
-  const step=(ex-sx)/100;
+  const sx = 70;
+  const ex = 930;
+  const y = 70;
+  const step = (ex - sx) / 100;
 
-  ctx.strokeStyle='#888';
-  ctx.lineWidth=2;
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(sx,y);
-  ctx.lineTo(ex,y);
+  ctx.moveTo(sx, y);
+  ctx.lineTo(ex, y);
   ctx.stroke();
 
   for(let i=1;i<=100;i++){
-    const x=sx+i*step;
-    ctx.fillStyle=i<=placedCount?'#5a7da8':'#ccc';
-    ctx.fillRect(x-2,y-6,4,12);
+    const x = sx + i * step;
+    ctx.fillStyle = i <= visibleTotal ? '#5a7da8' : '#ccc';
+    ctx.fillRect(x - 2, y - 10, 4, 20);
   }
 
-  ctx.fillStyle='#2f3e50';
-  ctx.font='12px Arial';
-  ctx.textAlign='center';
-  ctx.fillText('0',sx,y+20);
-  ctx.fillText('50',sx+50*step,y+20);
-  ctx.fillText('100',ex,y+20);
+  ctx.fillStyle = '#2f3e50';
+  ctx.font = '18px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('0', sx, y + NUMERAL_OFFSET_Y);
+  ctx.fillText('50', sx + 50 * step, y + NUMERAL_OFFSET_Y);
+  ctx.fillText('100', ex, y + NUMERAL_OFFSET_Y);
 
-  ctx.fillStyle='#d18b00';
-  ctx.font='11px Arial';
-  for(let t=1;t<=tensCount;t++){
-    const value=t*10;
-    const x=sx+value*step;
+  ctx.fillStyle = '#d18b00';
+  ctx.font = '11px Arial';
+  const markerCount = tensDisplay + extraTenMarker;
+  for(let t=1;t<=markerCount;t++){
+    const value = t * 10;
+    const x = sx + value * step;
     ctx.beginPath();
-    ctx.arc(x,y-12,5,0,Math.PI*2);
+    ctx.arc(x, y - 12, 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillText(String(value),x,y-20);
+    ctx.fillText(String(value), x, y - 20);
   }
 }
 
 function drawRodBackings(){
-  for(let r=0;r<tensCount;r++){
-    const x=RODS.x-4;
-    const y=RODS.y+r*ROD_ROW-2;
-    ctx.fillStyle='#fff3d8';
-    ctx.strokeStyle='#e3c78f';
-    rr(x,y,10*ROD_CELL+8,24,6);
+  for(let r=0;r<tensDisplay;r++){
+    const x = RODS.x - 4;
+    const y = RODS.y + r * ROD_ROW - 2;
+    ctx.fillStyle = '#fff3d8';
+    ctx.strokeStyle = '#e3c78f';
+    rr(x, y, 10 * ROD_CELL + 8, 24, 6);
     ctx.fill();
     ctx.stroke();
   }
 }
 
 function draw(){
-  ctx.clearRect(0,0,1000,650);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawNumberLine();
 
-  const onesBuilt=Math.max(0,placedCount-(tensCount*10));
+  ctx.fillStyle = '#5a7da8';
+  ctx.font = '700 26px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Loose Blocks', SOURCE.x + SOURCE.w / 2, HEADER_Y);
+  ctx.fillText(String(tensDisplay) + ' Tens', RODS.x + (10 * ROD_CELL) / 2, HEADER_Y);
+  ctx.fillText(String(onesDisplay) + ' Ones', ONES.x + 60, HEADER_Y);
 
-  ctx.fillStyle='#5a7da8';
-  ctx.font='700 26px Arial';
-  ctx.textAlign='center';
-  ctx.fillText('Loose Blocks',SOURCE.x+SOURCE.w/2,130);
-  ctx.fillText(String(tensCount)+' Tens',RODS.x+(10*ROD_CELL)/2,130);
-  ctx.fillText(String(onesBuilt)+' Ones',ONES.x+60,130);
-
-  if(revealed&&placedCount===n&&!running){
-    ctx.fillStyle='#2f3e50';
-    ctx.font='700 44px Arial';
-    ctx.fillText(String(n),SOURCE.x+SOURCE.w/2,RODS.y+(ROD_CELL-BLOCK)/2+BLOCK);
+  if(revealed && visibleTotal === preparedNumber && !running && mode === 'forward'){
+    ctx.fillStyle = '#2f3e50';
+    ctx.font = '700 44px Arial';
+    ctx.fillText(String(preparedNumber), SOURCE.x + SOURCE.w / 2, RODS.y + (ROD_CELL - BLOCK) / 2 + BLOCK);
   }
 
   drawRodBackings();
 
-  for(const b of blocks){
-    let fill='#5a7da8';
-    let stroke='#48698f';
-    if(b.zone==='rod'&&b.rod!==null&&b.rod<tensCount){
-      fill='#d6a754';
-      stroke='#9a732a';
+  for(let i=0;i<blocks.length;i++){
+    const b = blocks[i];
+    if(b.hidden) continue;
+
+    let fill = '#5a7da8';
+    let stroke = '#48698f';
+
+    const traveling = currentTravel && currentTravel.ids.includes(i);
+    if((b.zone === 'rod' && b.rod !== null && b.rod < tensDisplay) || traveling || b.zone === 'rodTravel'){
+      fill = '#d6a754';
+      stroke = '#9a732a';
     }
-    ctx.fillStyle=fill;
-    ctx.strokeStyle=stroke;
-    ctx.fillRect(b.x,b.y,BLOCK,BLOCK);
-    ctx.strokeRect(b.x,b.y,BLOCK,BLOCK);
+
+    const alpha = typeof b.fade === 'number' ? b.fade : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.fillRect(b.x, b.y, BLOCK, BLOCK);
+    ctx.strokeRect(b.x, b.y, BLOCK, BLOCK);
+    ctx.restore();
   }
 }
 
 function loop(now){
   update(now);
   draw();
-  if(running) rafId=requestAnimationFrame(loop);
+  if(running) rafId = requestAnimationFrame(loop);
 }
 
-pauseBtn.onclick=()=>{
-  if(running) paused=!paused;
+pauseBtn.onclick = () => {
+  if(running) paused = !paused;
 };
 
-sel.addEventListener('change',()=>{
+sel.addEventListener('change', () => {
   prepareNumber(Number(sel.value));
-  sel.style.visibility='hidden';
+  sel.style.visibility = 'hidden';
 });
 
-revealBtn.onclick=()=>{
-  sel.style.visibility='visible';
-  revealed=true;
+revealBtn.onclick = () => {
+  sel.style.visibility = 'visible';
+  revealed = true;
   draw();
 };
 
-playBtn.onclick=start;
-resetBtn.onclick=resetAll;
+forwardBtn.onclick = startForward;
+backwardBtn.onclick = startBackward;
+resetBtn.onclick = resetAll;
 
-sel.value='0';
+sel.value = '0';
 prepareNumber(0);
 </script>
 </body>
