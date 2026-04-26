@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,9 +93,9 @@ const LINE_UP_MS = 40;
 const ROD_MOVE_MS = 120;
 const FORWARD_SMALL_PAUSE_MS = 120;
 const TEN_PAUSE_MS = 1000;
-const BACKWARD_REMOVE_MS = FORWARD_MOVE_MS;
-const BACKWARD_ROD_MOVE_MS = ROD_MOVE_MS;
-const BACKWARD_PRE_BREAK_PAUSE_MS = TEN_PAUSE_MS;
+const BACKWARD_REMOVE_MS = 1500;
+const BACKWARD_ROD_MOVE_MS = 1500;
+const BACKWARD_PRE_BREAK_PAUSE_MS = 300;
 
 let preparedNumber = 0;
 let blocks = [];
@@ -1038,7 +1040,7 @@ function updateBackward(now){
       b.rod = null;
       b.fade = 1;
       visibleTotal--;
-      backwardStart = now + FORWARD_SMALL_PAUSE_MS; // match forward pause between images
+      backwardStart = now + 300; // match forward pause between images
       onesDisplay--;
       removeSlot--;
       backwardStart = 0;
@@ -1069,7 +1071,9 @@ function drawNumberLine(){
 
   for(let i=1;i<=100;i++){
     const x = sx + i * step;
-    ctx.fillStyle = i <= visibleTotal ? '#5a7da8' : '#ccc';
+    const fifthReached = i % 5 === 0 && i <= visibleTotal;
+
+    ctx.fillStyle = fifthReached ? '#d18b00' : (i <= visibleTotal ? '#5a7da8' : '#ccc');
     ctx.fillRect(x - 2, y - 14, 4, 28);
   }
 
@@ -1214,7 +1218,7 @@ updatePageCounter();
 </script>
 
 <div style="text-align:center; font-size:12px; margin-top:20px;">
-©2026 Numerics
+© 2026
 </div>
 
 </body>
