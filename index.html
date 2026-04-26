@@ -1,6 +1,3 @@
-
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,28 +6,13 @@
 <title>Numerics Animation</title>
 <style>
 body{font-family:Arial,Helvetica,sans-serif;background:#eef2f6;margin:0}
-.wrap{
-  max-width:1200px;
-  margin:20px auto;
-  background:white;
-  padding:20px;
-  border-radius:12px;
-}
-.controls{
-  display:flex;
-  flex-wrap:nowrap;
-  justify-content:center;
-  align-items:center;
-  gap:6px;
-  margin-bottom:10px;
-  overflow-x:auto;
-}
+.wrap{max-width:1100px;margin:20px auto;background:white;padding:20px;border-radius:12px}
+.controls{display:flex;flex-wrap:nowrap;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;white-space:nowrap;overflow-x:auto}
 canvas{display:block;margin:auto;border:1px solid #ccc;border-radius:10px;background:#f9fbfd}
-select,button{
-  font-size:14px;
-  padding:6px 10px;
-  white-space:nowrap;
-}
+select,button{font-size:13px;padding:6px 8px;margin:0;flex:0 0 auto}
+#countMode{max-width:245px}
+#itemType{max-width:130px}
+#num{max-width:70px}
 </style>
 </head>
 <body>
@@ -56,12 +38,13 @@ Numerics Number Builder
 <option value="cats">Cats</option>
 <option value="fish">Fish</option>
 </select>
-<select id="num"></select>
-<select id="countHeaderMode">
-<option value="standard">Option 1: Tens and Ones, Count Both</option>
-<option value="tensOnly">Option 2: Tens and Ones, Count Tens Only</option>
-<option value="bundleDirect">Option 3: Bundle Tens First, Then Leftover Ones</option>
+<select id="countMode">
+<option value="showOnesCountOnes">Show Ones, Count Ones</option>
+<option value="showTensOnesCountBoth">Show Tens and Ones, Count Both</option>
+<option value="showTensOnesCountTensFirst">Show Tens and Ones, Count Tens First</option>
+<option value="showTensOnesNoHeaders">Show Tens and Ones, No Headers</option>
 </select>
+<select id="num"></select>
 <button id="forwardBtn">Count Forward</button>
 <button id="backwardBtn">Count Backward</button>
 <button id="pauseBtn">Pause</button>
@@ -80,7 +63,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const sel = document.getElementById('num');
 const itemSel = document.getElementById('itemType');
-const countHeaderMode = document.getElementById('countHeaderMode');
+const countModeSel = document.getElementById('countMode');
 const forwardBtn = document.getElementById('forwardBtn');
 const backwardBtn = document.getElementById('backwardBtn');
 const pauseBtn = document.getElementById('pauseBtn');
@@ -108,9 +91,9 @@ const LINE_UP_MS = 40;
 const ROD_MOVE_MS = 120;
 const FORWARD_SMALL_PAUSE_MS = 120;
 const TEN_PAUSE_MS = 1000;
-const BACKWARD_REMOVE_MS = 780;
-const BACKWARD_ROD_MOVE_MS = 820;
-const BACKWARD_PRE_BREAK_PAUSE_MS = 1000;
+const BACKWARD_REMOVE_MS = FORWARD_MOVE_MS;
+const BACKWARD_ROD_MOVE_MS = ROD_MOVE_MS;
+const BACKWARD_PRE_BREAK_PAUSE_MS = TEN_PAUSE_MS;
 
 let preparedNumber = 0;
 let blocks = [];
@@ -124,6 +107,7 @@ let rafId = null;
 let revealed = false;
 let mode = 'idle';
 let currentItemType = 'apples';
+let currentCountMode = 'showOnesCountOnes';
 
 let forwardPlan = [];
 let forwardIndex = 0;
@@ -210,10 +194,48 @@ function rodPos(indexInRod, rod){
 }
 
 function onesGridPos(slot){
+  if(typeof isShowOnesOnly === 'function' && isShowOnesOnly()){
+    const group = Math.floor(slot / 10);
+    const withinGroup = slot % 10;
+    const row = Math.floor(withinGroup / 5);
+    const col = withinGroup % 5;
+
+    const groupGapY = 14;
+    const groupHeight = 2 * ONES_CELL + groupGapY;
+
+    // determine layout: 1 column for 1–50, 2 columns for 51–100
+    const totalGroups = Math.ceil((visibleTotal || preparedNumber) / 10);
+    const useTwoCols = totalGroups > 5;
+
+    let columnGroup = 0;
+    let groupInColumn = group;
+
+    if(useTwoCols){
+      columnGroup = Math.floor(group / 5);
+      groupInColumn = group % 5;
+    }
+
+    const columnGapX = 28;
+    const visibleGroupWidth = 4 * ONES_CELL + BLOCK;
+
+    const totalWidth = useTwoCols
+      ? visibleGroupWidth * 2 + columnGapX
+      : visibleGroupWidth;
+
+    const centerX = RODS.x + 220; // anchor under Ones header
+    const startX = centerX - totalWidth / 2;
+
+    return {
+      x: startX + columnGroup * (visibleGroupWidth + columnGapX) + col * ONES_CELL,
+      y: ONES.y + (ONES_CELL - BLOCK)/2 + groupInColumn * groupHeight + row * ONES_CELL
+    };
+  }
+
   const row = Math.floor(slot / 5);
   const col = slot % 5;
+  const shiftedOnesX = ONES.x + 70;
   return {
-    x: ONES.x + (ONES_CELL - BLOCK)/2 + col * ONES_CELL,
+    x: shiftedOnesX + (ONES_CELL - BLOCK)/2 + col * ONES_CELL,
     y: ONES.y + (ONES_CELL - BLOCK)/2 + row * ONES_CELL
   };
 }
@@ -358,32 +380,72 @@ function drawCandyCane(x,y){
   ctx.restore();
 }
 
-function drawShamrock(x,y){
-  ctx.save();
-  ctx.translate(x + BLOCK/2, y + BLOCK/2);
-  ctx.scale(SCALE, SCALE);
-  ctx.fillStyle = '#4b8f43';
 
-  ctx.beginPath();
-  ctx.arc(-4, -2, 4.2, 0, Math.PI*2);
-  ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(4, -2, 4.2, 0, Math.PI*2);
-  ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(0, 4, 4.2, 0, Math.PI*2);
-  ctx.fill();
 
-  ctx.strokeStyle = '#2f5d29';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(0, 2.5);
-  ctx.lineTo(0, 11);
-  ctx.stroke();
+function getCountMode(){
+  return countModeSel ? countModeSel.value : 'showTensOnesCountBoth';
+}
 
-  ctx.restore();
+function isShowOnesOnly(){
+  return getCountMode() === 'showOnesCountOnes';
+}
+
+function isNoHeadersMode(){
+  return getCountMode() === 'showTensOnesNoHeaders';
+}
+
+function isTensFirstMode(){
+  return getCountMode() === 'showTensOnesCountTensFirst';
+}
+
+function drawCountModeLabel(){
+  // The selected mode is shown by the dropdown. No canvas label is needed.
+}
+
+function showHeadersForMode(){
+  return !isNoHeadersMode();
+}
+
+function showTensAreaForMode(){
+  return !isShowOnesOnly();
+}
+
+function countTensFirstForMode(){
+  return isTensFirstMode();
+}
+
+function drawShamrock(x, y, size){
+  const leafW = size * 0.42;
+  const leafH = size * 0.50;
+
+  ctx.fillStyle = "#2f9e44";
+
+  function heartLeaf(cx, cy, rotation){
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+    ctx.beginPath();
+    ctx.moveTo(0, leafH * 0.45);
+    ctx.bezierCurveTo(
+      -leafW, -leafH * 0.1,
+      -leafW * 0.65, -leafH,
+      0, -leafH * 0.45
+    );
+    ctx.bezierCurveTo(
+      leafW * 0.65, -leafH,
+      leafW, -leafH * 0.1,
+      0, leafH * 0.45
+    );
+    ctx.fill();
+    ctx.restore();
+  }
+
+  heartLeaf(x, y - size * 0.24, 0);
+  heartLeaf(x - size * 0.25, y + size * 0.07, -Math.PI / 2.5);
+  heartLeaf(x + size * 0.25, y + size * 0.07, Math.PI / 2.5);
+
 }
 
 function drawFlower(x,y){
@@ -432,10 +494,14 @@ function drawSquare(x,y){
 }
 
 function drawDot(x,y){
+  ctx.save();
+  ctx.translate(x + BLOCK/2, y + BLOCK/2);
+  ctx.scale(SCALE, SCALE);
+  ctx.fillStyle = '#2f3e50';
   ctx.beginPath();
-  ctx.arc(x + BLOCK/2, y + BLOCK/2, BLOCK/3, 0, Math.PI*2);
-  ctx.fillStyle = '#5a7da8';
+  ctx.arc(0, 0, 7, 0, Math.PI*2); // larger dot (was smaller)
   ctx.fill();
+  ctx.restore();
 }
 
 function drawPresent(x,y){
@@ -488,6 +554,7 @@ function drawCat(x,y){
 function drawFish(x,y){
   ctx.save();
   ctx.translate(x + BLOCK/2, y + BLOCK/2);
+  ctx.scale(-1, 1);
   ctx.scale(SCALE, SCALE);
   ctx.fillStyle = '#42a5f5';
   ctx.beginPath();
@@ -512,7 +579,7 @@ function drawItemIcon(x,y){
     case 'pumpkins': drawPumpkin(x,y); break;
     case 'snowflakes': drawSnowflake(x,y); break;
     case 'candycanes': drawCandyCane(x,y); break;
-    case 'shamrocks': drawShamrock(x,y); break;
+    case 'shamrocks': drawShamrock(x,y,BLOCK); break;
     case 'flowers': drawFlower(x,y); break;
     case 'suns': drawSun(x,y); break;
     case 'dogs': drawDog(x,y); break;
@@ -558,6 +625,7 @@ function makeLooseBlocks(num){
 function prepareNumber(num){
   preparedNumber = num;
   currentItemType = itemSel.value;
+  currentCountMode = countModeSel.value;
   revealed = false;
   running = false;
   paused = false;
@@ -586,8 +654,36 @@ function prepareNumber(num){
 
 function buildForwardPlan(){
   forwardPlan = [];
-  const seen = [];
 
+  if(isShowOnesOnly()){
+    for(let i=0;i<preparedNumber;i++){
+      const id = order[i];
+      const p = onesGridPos(i);
+      forwardPlan.push({type:'toOnes', id, tx:p.x, ty:p.y, slot:i});
+    }
+    return;
+  }
+
+  if(isTensFirstMode()){
+    const fullTens = Math.floor(preparedNumber / 10);
+    const ones = preparedNumber % 10;
+
+    for(let r=0;r<fullTens;r++){
+      const ids = [];
+      for(let j=0;j<10;j++) ids.push(order[r * 10 + j]);
+      forwardPlan.push({type:'toRodDirect', ids, rod:r});
+      forwardPlan.push({type:'countTenDirect'});
+    }
+
+    for(let i=0;i<ones;i++){
+      const id = order[fullTens * 10 + i];
+      const p = onesGridPos(i);
+      forwardPlan.push({type:'toOnes', id, tx:p.x, ty:p.y, slot:i});
+    }
+    return;
+  }
+
+  const seen = [];
   for(let i=0;i<preparedNumber;i++){
     const id = order[i];
     seen.push(id);
@@ -607,37 +703,11 @@ function buildForwardPlan(){
   }
 }
 
-
-function buildBundleDirectPlan(){
-  forwardPlan = [];
-  const fullTens = Math.floor(preparedNumber / 10);
-  const leftoverOnes = preparedNumber % 10;
-
-  for(let r = 0; r < fullTens; r++){
-    const ids = [];
-    for(let j = 0; j < 10; j++){
-      ids.push(order[r * 10 + j]);
-    }
-    forwardPlan.push({type:'toRodDirect', ids, rod:r});
-    forwardPlan.push({type:'countTen'});
-  }
-
-  for(let i = 0; i < leftoverOnes; i++){
-    const id = order[fullTens * 10 + i];
-    const p = onesGridPos(i);
-    forwardPlan.push({type:'toOnes', id, tx:p.x, ty:p.y, slot:i});
-  }
-}
-
 function startForward(){
   if(running || paused) return;
   mode = 'forward';
   makeLooseBlocks(preparedNumber);
-  if(countHeaderMode.value === 'bundleDirect'){
-    buildBundleDirectPlan();
-  } else {
-    buildForwardPlan();
-  }
+  buildForwardPlan();
   forwardIndex = 0;
   forwardStart = 0;
   forwardPauseStart = 0;
@@ -652,6 +722,29 @@ function setupBackwardState(){
   makeLooseBlocks(preparedNumber);
   const fullTens = Math.floor(preparedNumber / 10);
   const ones = preparedNumber % 10;
+
+  if(isShowOnesOnly()){
+    for(let i=0;i<preparedNumber;i++){
+      const id = order[i];
+      const p = onesGridPos(i);
+      const b = blocks[id];
+      b.x = p.x;
+      b.y = p.y;
+      b.zone = 'ones';
+      b.rod = null;
+      b.slot = i;
+      b.hidden = false;
+    }
+    visibleTotal = preparedNumber;
+    tensDisplay = 0;
+    onesDisplay = preparedNumber;
+    extraTenMarker = 0;
+    currentTravel = null;
+    backwardState = preparedNumber > 0 ? 'remove' : 'done';
+    removeSlot = preparedNumber - 1;
+    backwardStart = 0;
+    return;
+  }
 
   for(let r=0;r<fullTens;r++){
     for(let j=0;j<10;j++){
@@ -731,6 +824,18 @@ function updateForward(now){
     return;
   }
 
+  if(step.type === 'countTenDirect'){
+    if(!forwardPauseStart) forwardPauseStart = now;
+    if(now - forwardPauseStart >= TEN_PAUSE_MS){
+      visibleTotal += 10;
+      tensDisplay++;
+      onesDisplay = 0;
+      forwardIndex++;
+      forwardPauseStart = 0;
+    }
+    return;
+  }
+
   if(!forwardStart){
     if(step.ids){
       step.starts = step.ids.map(id => ({id, x:blocks[id].x, y:blocks[id].y}));
@@ -742,36 +847,23 @@ function updateForward(now){
     forwardStart = now;
   }
 
-
   if(step.type === 'toRodDirect'){
     const elapsed = now - forwardStart;
-    const t = Math.min(1, elapsed / FORWARD_MOVE_MS);
+    const t = Math.min(1, elapsed / ROD_MOVE_MS);
     const e = ease(t);
-    const smooth = e * e * (3 - 2 * e);
 
     for(let i=0;i<step.ids.length;i++){
-      const start = step.starts[i];
-      const b = blocks[start.id];
-      const p = rodPos(i, step.rod);
-      b.x = start.x + (p.x - start.x) * smooth;
-      b.y = start.y + (p.y - start.y) * smooth;
+      const s = step.starts[i];
+      const b = blocks[s.id];
+      const target = rodPos(i, step.rod);
+      b.x = s.x + (target.x - s.x) * e;
+      b.y = s.y + (target.y - s.y) * e;
       b.zone = 'rod';
       b.rod = step.rod;
       b.slot = null;
     }
 
     if(t >= 1){
-      for(let i=0;i<step.ids.length;i++){
-        const id = step.ids[i];
-        const b = blocks[id];
-        const p = rodPos(i, step.rod);
-        b.x = p.x;
-        b.y = p.y;
-        b.zone = 'rod';
-        b.rod = step.rod;
-        b.slot = null;
-      }
-      visibleTotal += 10;
       forwardIndex++;
       forwardStart = 0;
     }
@@ -925,7 +1017,7 @@ function updateBackward(now){
       return;
     }
 
-    const removeId = order[tensDisplay * 10 + removeSlot];
+    const removeId = isShowOnesOnly() ? order[removeSlot] : order[tensDisplay * 10 + removeSlot];
     const b = blocks[removeId];
 
     if(!backwardStart){
@@ -935,7 +1027,7 @@ function updateBackward(now){
     }
 
     const elapsed = now - backwardStart;
-    const t = Math.min(1, elapsed / BACKWARD_REMOVE_MS);
+    const t = Math.min(1, elapsed / (BACKWARD_REMOVE_MS * 0.5));
     const fade = 1 - t;
     b.fade = fade;
 
@@ -946,6 +1038,7 @@ function updateBackward(now){
       b.rod = null;
       b.fade = 1;
       visibleTotal--;
+      backwardStart = now + FORWARD_SMALL_PAUSE_MS; // match forward pause between images
       onesDisplay--;
       removeSlot--;
       backwardStart = 0;
@@ -980,27 +1073,23 @@ function drawNumberLine(){
     ctx.fillRect(x - 2, y - 14, 4, 28);
   }
 
-  ctx.fillStyle = '#2f3e50';
-  ctx.font = '22px Arial';
-  ctx.textAlign = 'center';
-  ctx.fillText('0', sx, y + NUMERAL_OFFSET_Y);
-  ctx.fillText('50', sx + 50 * step, y + NUMERAL_OFFSET_Y);
-  ctx.fillText('100', ex, y + NUMERAL_OFFSET_Y);
-
   ctx.fillStyle = '#d18b00';
-  ctx.font = '11px Arial';
-  const markerCount = tensDisplay + extraTenMarker;
-  for(let t=1;t<=markerCount;t++){
+  ctx.font = '700 13px Arial';
+  ctx.textAlign = 'center';
+
+  const tensReached = Math.floor(visibleTotal / 10);
+  for(let t=1;t<=tensReached;t++){
     const value = t * 10;
     const x = sx + value * step;
     ctx.beginPath();
     ctx.arc(x, y - 12, 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillText(String(value), x, y - 20);
+    ctx.fillText(String(value), x, y - 22);
   }
 }
 
 function drawRodBackings(){
+  if(isShowOnesOnly()) return;
   for(let r=0;r<tensDisplay;r++){
     const x = RODS.x - 4;
     const y = RODS.y + r * ROD_ROW - 2;
@@ -1012,35 +1101,6 @@ function drawRodBackings(){
   }
 }
 
-function plural(value, singular, pluralWord){
-  return String(value) + ' ' + (value === 1 ? singular : pluralWord);
-}
-
-function getHeaderTexts(){
-  const mode = countHeaderMode.value;
-
-  if(mode === 'standard'){
-    return {
-      tens: plural(tensDisplay, 'Ten', 'Tens'),
-      ones: plural(onesDisplay, 'One', 'Ones')
-    };
-  }
-
-  if(mode === 'tensOnly'){
-    return {
-      tens: plural(tensDisplay, 'Ten', 'Tens'),
-      ones: 'Ones'
-    };
-  }
-
-  // Option 3 keeps both headers visible.
-  // The animation collects complete tens as bundles first, then shows leftover ones.
-  return {
-    tens: plural(tensDisplay, 'Ten', 'Tens'),
-    ones: onesDisplay > 0 ? plural(onesDisplay, 'One', 'Ones') : 'Ones'
-  };
-}
-
 function draw(){
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawNumberLine();
@@ -1049,9 +1109,18 @@ function draw(){
   ctx.font = '700 26px Arial';
   ctx.textAlign = 'center';
   ctx.fillText(ITEM_LABELS[currentItemType], SOURCE.x + SOURCE.w / 2, HEADER_Y);
-  const headers = getHeaderTexts();
-  ctx.fillText(headers.tens, RODS.x + (10 * ROD_CELL) / 2, HEADER_Y);
-  ctx.fillText(headers.ones, ONES.x + 60, HEADER_Y);
+
+  if(showHeadersForMode()){
+    if(isShowOnesOnly()){
+      ctx.fillText(String(onesDisplay) + ' Ones', RODS.x + 220, HEADER_Y);
+    } else {
+      const tensWord = tensDisplay === 1 ? ' Ten' : ' Tens';
+      ctx.fillText(String(tensDisplay) + tensWord, RODS.x + (10 * ROD_CELL) / 2, HEADER_Y);
+      const onesStartX = ONES.x + 70;
+      const onesHeaderX = onesStartX + (4 * ONES_CELL + BLOCK) / 2;
+      ctx.fillText(String(onesDisplay) + ' Ones', onesHeaderX, HEADER_Y);
+    }
+  }
 
   if(revealed && visibleTotal === preparedNumber && !running && mode === 'forward'){
     ctx.fillStyle = '#2f3e50';
@@ -1072,7 +1141,7 @@ function draw(){
     let stroke = '#48698f';
 
     const traveling = currentTravel && currentTravel.ids.includes(i);
-    if((b.zone === 'rod' && b.rod !== null && b.rod < tensDisplay) || traveling || b.zone === 'rodTravel'){
+    if(!isShowOnesOnly() && ((b.zone === 'rod' && b.rod !== null && b.rod < tensDisplay) || traveling || b.zone === 'rodTravel')){
       fill = '#d6a754';
       stroke = '#9a732a';
     }
@@ -1103,7 +1172,11 @@ sel.addEventListener('change', () => {
   sel.style.visibility = 'hidden';
 });
 
-countHeaderMode.addEventListener('change', draw);
+
+countModeSel.addEventListener('change', () => {
+  currentCountMode = countModeSel.value;
+  prepareNumber(Number(sel.value));
+});
 
 itemSel.addEventListener('change', () => {
   currentItemType = itemSel.value;
@@ -1125,7 +1198,8 @@ prepareNumber(0);
 
 let page = 1;
 function updatePageCounter(){
-  document.getElementById('pageCounter').textContent = page;
+  const pc = document.getElementById('pageCounter');
+  if(pc) pc.textContent = page;
 }
 
 // increment on reset (acts like new page)
