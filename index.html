@@ -53,6 +53,7 @@ Numerics Number Builder
 <button id="pauseBtn">Pause</button>
 <button id="resetBtn">Reset</button>
 <button id="revealBtn">Reveal Number</button>
+<button id="convertBtn" type="button">Change Units</button>
 </div>
 
 <canvas id="c" width="1000" height="650"></canvas>
@@ -72,13 +73,17 @@ const backwardBtn = document.getElementById('backwardBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const resetBtn = document.getElementById('resetBtn');
 const revealBtn = document.getElementById('revealBtn');
+const convertBtn = document.getElementById('convertBtn');
 
 for(let i=0;i<=100;i++){
-  const o=document.createElement('option');
-  o.value=i;
-  o.text=i;
+  const o = document.createElement('option');
+  o.value = i;
+  o.textContent = i;
   sel.appendChild(o);
 }
+
+
+
 
 const SCALE = 1.4;
 const BLOCK = 18;
@@ -850,6 +855,95 @@ function setupBackwardState(){
   backwardStart = 0;
 }
 
+
+
+
+function showBuiltNumberAsTensAndOnes(){
+  if(running || preparedNumber <= 0) return;
+
+  currentCountMode = 'showTensOnesCountBoth';
+  countModeSel.value = currentCountMode;
+
+  const fullTens = Math.floor(preparedNumber / 10);
+  const ones = preparedNumber % 10;
+
+  for(let r=0;r<fullTens;r++){
+    for(let j=0;j<10;j++){
+      const id = order[r * 10 + j];
+      const b = blocks[id];
+      const p = rodPos(j, r);
+      b.x = p.x;
+      b.y = p.y;
+      b.zone = 'rod';
+      b.rod = r;
+      b.slot = null;
+      b.hidden = false;
+      b.fade = 1;
+    }
+  }
+
+  for(let i=0;i<ones;i++){
+    const id = order[fullTens * 10 + i];
+    const b = blocks[id];
+    const p = onesGridPos(i);
+    b.x = p.x;
+    b.y = p.y;
+    b.zone = 'ones';
+    b.rod = null;
+    b.slot = i;
+    b.hidden = false;
+    b.fade = 1;
+  }
+
+  visibleTotal = preparedNumber;
+  tensDisplay = fullTens;
+  onesDisplay = ones;
+  extraTenMarker = 0;
+  mode = 'converted';
+  convertBtn.textContent = 'Change Units';
+  convertBtn.textContent = 'Change Units';
+      
+  draw();
+}
+
+function showBuiltNumberAsOnes(){
+  if(running || preparedNumber <= 0) return;
+
+  currentCountMode = 'showOnesCountOnes';
+  countModeSel.value = currentCountMode;
+
+  for(let i=0;i<preparedNumber;i++){
+    const id = order[i];
+    const b = blocks[id];
+    const p = onesGridPos(i);
+    b.x = p.x;
+    b.y = p.y;
+    b.zone = 'ones';
+    b.rod = null;
+    b.slot = i;
+    b.hidden = false;
+    b.fade = 1;
+  }
+
+  visibleTotal = preparedNumber;
+  tensDisplay = 0;
+  onesDisplay = preparedNumber;
+  extraTenMarker = 0;
+  mode = 'converted';
+  convertBtn.textContent = 'Change Units';
+  
+  draw();
+}
+
+function switchBuiltNumberView(){
+  if(currentCountMode === 'showOnesCountOnes'){
+    showBuiltNumberAsTensAndOnes();
+  } else {
+    showBuiltNumberAsOnes();
+  }
+}
+
+
 function startBackward(){
   if(running || paused) return;
   mode = 'backward';
@@ -867,6 +961,9 @@ function resetAll(){
 function updateForward(now){
   if(forwardIndex >= forwardPlan.length){
     running = false;
+    if(visibleTotal === preparedNumber){
+      
+    }
     return;
   }
 
@@ -1253,6 +1350,8 @@ itemSel.addEventListener('change', () => {
   draw();
 });
 
+convertBtn.onclick = switchBuiltNumberView;
+
 revealBtn.onclick = () => {
   sel.style.visibility = 'visible';
   revealed = true;
@@ -1284,7 +1383,7 @@ updatePageCounter();
 </script>
 
 <div style="text-align:center; font-size:12px; margin-top:20px;">
-© 2026
+©2026 Numerics
 </div>
 
 </body>
